@@ -24,6 +24,8 @@ FetchContent_MakeAvailable(glfw imgui)
 add_executable(
   memory_allocation_imgui
   src/main.cpp
+  src/gui_app.cpp
+  src/memory_manager.cpp
   ${imgui_SOURCE_DIR}/imgui.cpp
   ${imgui_SOURCE_DIR}/imgui_draw.cpp
   ${imgui_SOURCE_DIR}/imgui_tables.cpp
