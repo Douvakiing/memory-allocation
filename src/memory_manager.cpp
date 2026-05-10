@@ -6,37 +6,50 @@
 
 using namespace std;
 
-bool MemoryManager::Initialize(int totalMemorySize, vector<Hole> initialHoles, string& message) {
+bool MemoryManager::Initialize(int totalMemorySize, string& message) {
     if (totalMemorySize <= 0) {
         message = "Total memory size must be greater than 0.";
         return false;
     }
 
-    sort(initialHoles.begin(), initialHoles.end(), [](const Hole& a, const Hole& b) {
-        return a.start < b.start;
-    });
-
-    for (const Hole& hole : initialHoles) {
-        if (hole.start < 0 || hole.size <= 0 || hole.start + hole.size > totalMemorySize) {
-            message = "One or more holes are out of memory bounds.";
-            return false;
-        }
-    }
-
-    for (size_t i = 1; i < initialHoles.size(); ++i) {
-        const int prevEnd = initialHoles[i - 1].start + initialHoles[i - 1].size;
-        if (prevEnd > initialHoles[i].start) {
-            message = "Initial holes overlap. Please fix and try again.";
-            return false;
-        }
-    }
-
     totalMemory = totalMemorySize;
-    holes = move(initialHoles);
+    holes.clear();
     allocatedSegments.clear();
     processTables.clear();
+    message = "Memory initialized successfully. Add holes to begin allocation.";
+    return true;
+}
+
+bool MemoryManager::AddHole(int start, int size, string& message) {
+    if (!IsInitialized()) {
+        message = "Initialize memory first.";
+        return false;
+    }
+    if (start < 0 || size <= 0 || start + size > totalMemory) {
+        message = "Hole is out of memory bounds.";
+        return false;
+    }
+
+    const int holeEnd = start + size;
+    for (const Hole& existingHole : holes) {
+        const int existingHoleEnd = existingHole.start + existingHole.size;
+        if (start < existingHoleEnd && holeEnd > existingHole.start) {
+            message = "Hole overlaps an existing hole.";
+            return false;
+        }
+    }
+
+    for (const SegmentAllocation& segment : allocatedSegments) {
+        const int segmentEnd = segment.start + segment.size;
+        if (start < segmentEnd && holeEnd > segment.start) {
+            message = "Hole overlaps an allocated segment.";
+            return false;
+        }
+    }
+
+    holes.push_back({start, size});
     MergeHoles();
-    message = "Memory initialized successfully.";
+    message = "Hole added successfully.";
     return true;
 }
 

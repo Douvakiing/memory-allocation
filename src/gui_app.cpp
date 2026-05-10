@@ -11,9 +11,40 @@
 #include <algorithm>
 #include <cstdio>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 using namespace std;
+
+// Layout tuning (names match UI sections). Edit values to resize panels.
+// Top row: left = MEMORY SETTINGS + ADD HOLES, right = PROCESS SETUP.
+static constexpr float kMemorySettingsProcessSetupRowHeightRatio = 0.5f;
+static constexpr float kMemorySettingsProcessSetupRowMinHeight = 250.0f;
+static constexpr float kMemorySettingsProcessSetupRowMaxHeight = 320.0f;
+
+static constexpr float kMemorySettingsSectionHeight = 80.0f;
+static constexpr float kAddHolesSectionMinHeight = 140.0f;
+static constexpr float kMemorySettingsToAddHolesGap = 10.0f;
+
+// MEMORY MAP (full-width bar below top row).
+static constexpr float kMemoryMapSectionHeight = 100.0f;
+
+// Bottom row: ACTIVE PROCESSES | SEGMENT TABLES.
+static constexpr float kActiveProcessesSegmentTablesRowMinHeight = 140.0f;
+static constexpr float kActiveProcessesSegmentTablesContentMinHeight = 120.0f;
+
+// STATUS line at the very bottom.
+static constexpr float kStatusSectionHeight = 40.0f;
+
+// Vertical spacing between major blocks and inside bottom row.
+static constexpr float kMainVerticalSpacing = 12.0f;
+static constexpr float kBottomRowInnerPadding = 6.0f;
+
+static ImU32 GenerateSequentialProcessColor(int processIndex) {
+    const float rawHue = static_cast<float>(processIndex) * 0.61803398875f;
+    const float hue = rawHue - static_cast<int>(rawHue);
+    return ImGui::ColorConvertFloat4ToU32(ImVec4(ImColor::HSV(hue, 0.78f, 0.95f)));
+}
 
 static void DrawMemoryLayout(const MemoryManager& manager) {
     if (!manager.IsInitialized()) {
@@ -29,9 +60,15 @@ static void DrawMemoryLayout(const MemoryManager& manager) {
     };
 
     vector<Block> blocks;
+    static unordered_map<string, ImU32> processColors;
+    static int nextProcessColorIndex = 0;
     for (const auto& seg : manager.AllocatedSegments()) {
+        auto [it, inserted] = processColors.emplace(seg.processName, 0);
+        if (inserted) {
+            it->second = GenerateSequentialProcessColor(nextProcessColorIndex++);
+        }
         blocks.push_back(
-            {seg.processName + ":" + seg.segmentName, seg.start, seg.size, IM_COL32(80, 180, 255, 255)});
+            {seg.processName + "\n" + seg.segmentName, seg.start, seg.size, it->second});
     }
     for (const auto& hole : manager.Holes()) {
         blocks.push_back({"Hole", hole.start, hole.size, IM_COL32(120, 220, 120, 255)});
@@ -65,7 +102,7 @@ static void DrawMemoryLayout(const MemoryManager& manager) {
         drawList->AddRectFilled(ImVec2(x1, origin.y), ImVec2(x2, origin.y + barHeight), block.color);
         drawList->AddRect(ImVec2(x1, origin.y), ImVec2(x2, origin.y + barHeight), IM_COL32(30, 30, 30, 255));
 
-        if ((x2 - x1) > 55.0f) {
+        if ((x2 - x1) > 42.0f) {
             drawList->AddText(ImVec2(x1 + 4.0f, origin.y + 3.0f), IM_COL32(0, 0, 0, 255), block.label.c_str());
         }
 
@@ -115,12 +152,11 @@ int RunMemoryAllocationGuiApp() {
     int totalMemoryInput = 1024;
     int holeStartInput = 0;
     int holeSizeInput = 128;
-    vector<Hole> setupHoles;
 
     char processNameBuffer[64] = "P1";
     vector<SegmentInput> pendingSegments = {{"Code", 50}, {"Data", 200}, {"Stack", 100}};
     AllocationMethod selectedMethod = AllocationMethod::FirstFit;
-    string statusMessage = "Set total memory and holes, then initialize.";
+    string statusMessage = "Set total memory size and initialize memory first.";
 
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
@@ -145,18 +181,27 @@ int RunMemoryAllocationGuiApp() {
         ImGui::Separator();
 
         const float availableHeight = ImGui::GetContentRegionAvail().y;
-        const float memoryMapHeight = 150.0f;
-        const float bottomPanelsHeight = max(170.0f, availableHeight * 0.26f);
-        const float topPanelsHeight = max(260.0f, availableHeight - memoryMapHeight - bottomPanelsHeight - 12.0f);
+        const float memoryMapHeight = kMemoryMapSectionHeight;
+        const float statusBarHeight = kStatusSectionHeight;
+        const float topPanelsHeight = clamp(
+            availableHeight * kMemorySettingsProcessSetupRowHeightRatio,
+            kMemorySettingsProcessSetupRowMinHeight,
+            kMemorySettingsProcessSetupRowMaxHeight);
+        const float bottomPanelsHeight = max(
+            kActiveProcessesSegmentTablesRowMinHeight,
+            availableHeight - topPanelsHeight - memoryMapHeight - kMainVerticalSpacing);
+        const float bottomPanelsContentHeight = max(
+            kActiveProcessesSegmentTablesContentMinHeight,
+            bottomPanelsHeight - statusBarHeight - kBottomRowInnerPadding);
 
         if (ImGui::BeginTable("TopPanels", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_BordersInnerV)) {
             ImGui::TableNextColumn();
             ImGui::BeginChild("HardwareSettingsPanel", ImVec2(0, topPanelsHeight), true);
 
             const float leftColumnAvailY = ImGui::GetContentRegionAvail().y;
-            const float memorySettingsHeight = 95.0f;
-            const float initializeSectionHeight = 54.0f;
-            const float holesSectionHeight = max(120.0f, leftColumnAvailY - memorySettingsHeight - initializeSectionHeight - 10.0f);
+            const float memorySettingsHeight = kMemorySettingsSectionHeight;
+            const float holesSectionHeight =
+                max(kAddHolesSectionMinHeight, leftColumnAvailY - memorySettingsHeight - kMemorySettingsToAddHolesGap);
 
             ImGui::BeginChild("MemorySettingsSection", ImVec2(0, memorySettingsHeight), true);
             ImGui::TextUnformatted("MEMORY SETTINGS");
@@ -164,71 +209,54 @@ int RunMemoryAllocationGuiApp() {
             if (totalMemoryInput < 1) {
                 totalMemoryInput = 1;
             }
-            int methodChoice = static_cast<int>(selectedMethod);
-            const char* methods[] = {"First Fit", "Best Fit"};
-            if (ImGui::Combo("Allocation Algorithm", &methodChoice, methods, IM_ARRAYSIZE(methods))) {
-                selectedMethod = static_cast<AllocationMethod>(methodChoice);
+            if (ImGui::Button("Initialize Memory", ImVec2(-1.0f, 0.0f))) {
+                memoryManager.Initialize(totalMemoryInput, statusMessage);
             }
             ImGui::EndChild();
 
             ImGui::BeginChild("HolesSection", ImVec2(0, holesSectionHeight), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
-            ImGui::TextUnformatted("INITIAL HOLES");
+            ImGui::TextUnformatted("ADD HOLES");
+            ImGui::AlignTextToFramePadding();
             ImGui::TextUnformatted("Start");
-            ImGui::SetNextItemWidth(100.0f);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(90.0f);
             ImGui::InputInt("##HoleStartAddress", &holeStartInput);
             ImGui::SameLine();
+            ImGui::AlignTextToFramePadding();
             ImGui::TextUnformatted("Size");
-            ImGui::SetNextItemWidth(100.0f);
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(90.0f);
             ImGui::InputInt("##HoleSize", &holeSizeInput);
             if (holeSizeInput < 1) {
                 holeSizeInput = 1;
             }
             if (ImGui::Button("Add Hole")) {
-                setupHoles.push_back({holeStartInput, holeSizeInput});
-                holeStartInput += holeSizeInput;
-                statusMessage = "Hole added to setup list.";
-            }
-            ImGui::SameLine();
-            if (ImGui::Button("Reset Hole List")) {
-                setupHoles.clear();
-                holeStartInput = 0;
-                holeSizeInput = 128;
-                statusMessage = "Cleared all setup holes.";
+                if (memoryManager.AddHole(holeStartInput, holeSizeInput, statusMessage)) {
+                    holeStartInput += holeSizeInput;
+                }
             }
 
-            int removeHoleIndex = -1;
-            if (ImGui::BeginTable("SetupHoleList", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
+            if (ImGui::BeginTable("SetupHoleList", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
                 ImGui::TableSetupColumn("#", ImGuiTableColumnFlags_WidthFixed, 24.0f);
                 ImGui::TableSetupColumn("Start");
                 ImGui::TableSetupColumn("Size");
-                ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 70.0f);
                 ImGui::TableHeadersRow();
-                for (int i = 0; i < static_cast<int>(setupHoles.size()); ++i) {
+                const auto& holes = memoryManager.Holes();
+                for (int i = 0; i < static_cast<int>(holes.size()); ++i) {
                     ImGui::TableNextRow();
                     ImGui::TableSetColumnIndex(0);
                     ImGui::Text("%d", i + 1);
                     ImGui::TableSetColumnIndex(1);
-                    ImGui::Text("%d", setupHoles[i].start);
+                    ImGui::Text("%d", holes[i].start);
                     ImGui::TableSetColumnIndex(2);
-                    ImGui::Text("%d", setupHoles[i].size);
-                    ImGui::TableSetColumnIndex(3);
-                    ImGui::PushID(i + 10000);
-                    if (ImGui::Button("Remove")) {
-                        removeHoleIndex = i;
-                    }
-                    ImGui::PopID();
+                    ImGui::Text("%d", holes[i].size);
                 }
                 ImGui::EndTable();
             }
-            if (removeHoleIndex >= 0) {
-                setupHoles.erase(setupHoles.begin() + removeHoleIndex);
-                statusMessage = "Hole removed from setup list.";
-            }
-            ImGui::EndChild();
-
-            ImGui::BeginChild("InitializeSection", ImVec2(0, initializeSectionHeight), true);
-            if (ImGui::Button("Initialize Memory", ImVec2(-1.0f, 0.0f))) {
-                memoryManager.Initialize(totalMemoryInput, setupHoles, statusMessage);
+            if (!memoryManager.IsInitialized()) {
+                ImGui::TextUnformatted("Initialize memory before adding holes.");
+            } else if (memoryManager.Holes().empty()) {
+                ImGui::TextUnformatted("No holes added yet.");
             }
             ImGui::EndChild();
 
@@ -237,6 +265,11 @@ int RunMemoryAllocationGuiApp() {
             ImGui::TableNextColumn();
             ImGui::BeginChild("ProcessSetupPanel", ImVec2(0, topPanelsHeight), true);
             ImGui::TextUnformatted("PROCESS SETUP");
+            int methodChoice = static_cast<int>(selectedMethod);
+            const char* methods[] = {"First Fit", "Best Fit"};
+            if (ImGui::Combo("Allocation Algorithm", &methodChoice, methods, IM_ARRAYSIZE(methods))) {
+                selectedMethod = static_cast<AllocationMethod>(methodChoice);
+            }
             ImGui::InputText("Process Name", processNameBuffer, IM_ARRAYSIZE(processNameBuffer));
             ImGui::Text("Segment Num: %d", static_cast<int>(pendingSegments.size()));
 
@@ -288,7 +321,7 @@ int RunMemoryAllocationGuiApp() {
 
         if (ImGui::BeginTable("BottomPanels", 2, ImGuiTableFlags_SizingStretchProp | ImGuiTableFlags_BordersInnerV)) {
             ImGui::TableNextColumn();
-            ImGui::BeginChild("ActiveProcessesPanel", ImVec2(0, bottomPanelsHeight), true);
+            ImGui::BeginChild("ActiveProcessesPanel", ImVec2(0, bottomPanelsContentHeight), true);
             ImGui::TextUnformatted("ACTIVE PROCESSES");
             string processToRemove;
             for (const auto& entry : memoryManager.ProcessTables()) {
@@ -306,12 +339,10 @@ int RunMemoryAllocationGuiApp() {
             if (memoryManager.ProcessTables().empty()) {
                 ImGui::TextUnformatted("No allocated processes yet.");
             }
-            ImGui::Separator();
-            ImGui::TextWrapped("Status: %s", statusMessage.c_str());
             ImGui::EndChild();
 
             ImGui::TableNextColumn();
-            ImGui::BeginChild("SegmentTablesPanel", ImVec2(0, bottomPanelsHeight), true);
+            ImGui::BeginChild("SegmentTablesPanel", ImVec2(0, bottomPanelsContentHeight), true);
             ImGui::TextUnformatted("SEGMENT TABLES");
             for (const auto& processEntry : memoryManager.ProcessTables()) {
                 if (ImGui::CollapsingHeader(processEntry.first.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -339,6 +370,9 @@ int RunMemoryAllocationGuiApp() {
             ImGui::EndChild();
             ImGui::EndTable();
         }
+        ImGui::BeginChild("BottomStatusBar", ImVec2(0, statusBarHeight), true);
+        ImGui::TextWrapped("Status: %s", statusMessage.c_str());
+        ImGui::EndChild();
 
         ImGui::End();
 

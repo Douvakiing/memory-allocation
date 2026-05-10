@@ -38,7 +38,8 @@ private:
     vector<SegmentAllocation> allocatedSegments;
     map<string, vector<SegmentAllocation>> processTables;
 public:
-    bool Initialize(int totalMemorySize, vector<Hole> initialHoles, string& message);
+    bool Initialize(int totalMemorySize, string& message);
+    bool AddHole(int start, int size, string& message);
     bool IsInitialized() const;
     int TotalMemory() const;
     const vector<Hole>& Holes() const;
