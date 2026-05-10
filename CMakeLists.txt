@@ -46,4 +46,16 @@ target_link_libraries(memory_allocation_imgui PRIVATE glfw)
 
 if(WIN32)
   target_link_libraries(memory_allocation_imgui PRIVATE opengl32)
+
+  # Hide terminal window for Release builds on Windows.
+  if(MSVC)
+    target_link_options(memory_allocation_imgui PRIVATE
+      $<$<CONFIG:Release>:/SUBSYSTEM:WINDOWS>
+      $<$<CONFIG:Release>:/ENTRY:mainCRTStartup>
+    )
+  else()
+    target_link_options(memory_allocation_imgui PRIVATE
+      $<$<CONFIG:Release>:-mwindows>
+    )
+  endif()
 endif()
